@@ -1,7 +1,6 @@
 import streamlit as st
-import PIL.Image as Image
+from PIL import Image
 import io
-from PIL import ImageOps
 
 # Konfigurasi halaman
 st.set_page_config(
@@ -100,7 +99,7 @@ st.sidebar.header("Pengaturan Kompresi")
 # Pilihan format output
 output_format = st.sidebar.selectbox(
     "Format Output",
-    ["JPEG", "PNG", "WEBP"],
+    ["JPEG", "PNG"],
     help="Pilih format output untuk gambar yang dikompresi"
 )
 

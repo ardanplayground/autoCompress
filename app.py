@@ -1,10 +1,7 @@
 import streamlit as st
 import PIL.Image as Image
 import io
-import os
-import tempfile
 from PIL import ImageOps
-import base64
 
 # Konfigurasi halaman
 st.set_page_config(
@@ -12,10 +9,6 @@ st.set_page_config(
     page_icon="🖼️",
     layout="wide"
 )
-
-# Fungsi untuk mendapatkan ukuran file
-def get_file_size(image_bytes):
-    return len(image_bytes)
 
 # Fungsi untuk format ukuran file
 def format_file_size(size_bytes):
@@ -76,42 +69,12 @@ def compress_image(image, format_type, quality=85, max_size=None, size_unit='KB'
     
     return output.getvalue()
 
-# Fungsi untuk handle HEIC (fallback tanpa pyheif)
-def handle_heic_format(uploaded_file):
-    """Handle HEIC format dengan fallback ke error message"""
-    try:
-        # Coba import pyheif
-        import pyheif
-        heif_file = pyheif.read(uploaded_file.getvalue())
-        image = Image.frombytes(
-            heif_file.mode,
-            heif_file.size,
-            heif_file.data,
-            "raw",
-            heif_file.mode,
-            heif_file.stride,
-        )
-        return image
-    except ImportError:
-        st.error("Format HEIC tidak didukung. Silakan install pyheif atau konversi ke format lain terlebih dahulu.")
-        return None
-    except Exception as e:
-        st.error(f"Error membaca file HEIC: {str(e)}")
-        return None
-
 # Fungsi untuk memproses gambar
 def process_image(uploaded_file, output_format, max_size=None, size_unit='KB'):
     try:
         # Baca gambar
         image_data = uploaded_file.getvalue()
-        
-        # Handle format HEIC
-        if uploaded_file.type in ['image/heic', 'image/heif']:
-            image = handle_heic_format(uploaded_file)
-            if image is None:
-                return None, 0, 0, 0
-        else:
-            image = Image.open(io.BytesIO(image_data))
+        image = Image.open(io.BytesIO(image_data))
         
         # Compress gambar
         compressed_data = compress_image(image, output_format, max_size=max_size, size_unit=size_unit)
@@ -171,18 +134,10 @@ if use_size_limit:
 # Area upload
 uploaded_files = st.file_uploader(
     "Drag and drop gambar di sini",
-    type=['jpg', 'jpeg', 'png', 'webp', 'bmp', 'tiff'],
+    type=['jpg', 'jpeg', 'png'],
     accept_multiple_files=True,
-    help="Support format: JPG, JPEG, PNG, WEBP, BMP, TIFF"
+    help="Support format: JPG, JPEG, PNG"
 )
-
-# Info tentang HEIC
-st.sidebar.info("""
-**Note tentang HEIC:**
-- Format HEIC memerlukan package `pyheif`
-- Install dengan: `pip install pyheif`
-- Atau konversi ke format lain terlebih dahulu
-""")
 
 if uploaded_files:
     st.subheader(f"📁 {len(uploaded_files)} Gambar Diproses")
@@ -198,10 +153,7 @@ if uploaded_files:
         
         with col1:
             # Tampilkan gambar asli
-            try:
-                st.image(uploaded_file, caption="Gambar Asli", use_column_width=True)
-            except Exception as e:
-                st.error(f"Tidak bisa menampilkan gambar: {str(e)}")
+            st.image(uploaded_file, caption="Gambar Asli", use_column_width=True)
         
         with col2:
             with st.spinner(f"Memproses {uploaded_file.name}..."):
@@ -211,10 +163,7 @@ if uploaded_files:
                     compressed_data, original_size, compressed_size, reduction = result
                     
                     # Tampilkan gambar hasil kompresi
-                    try:
-                        st.image(compressed_data, caption="Hasil Kompresi", use_column_width=True)
-                    except Exception as e:
-                        st.error(f"Tidak bisa menampilkan hasil: {str(e)}")
+                    st.image(compressed_data, caption="Hasil Kompresi", use_column_width=True)
                     
                     # Info ukuran file
                     st.info(f"""
@@ -264,16 +213,11 @@ else:
     ### 🚀 Fitur:
     - ✅ Support multiple upload (drag & drop)
     - ✅ Auto delete setelah proses - tidak disimpan di server
-    - ✅ Support berbagai format: JPG, JPEG, PNG, WEBP, BMP, TIFF
+    - ✅ Support format: JPG, JPEG, PNG
     - ✅ Opsi batasan ukuran file (KB/MB)
     - ✅ Kompresi optimal otomatis
     - ✅ Download hasil kompresi
     - ✅ Ringkasan penghematan
-    
-    ### 📝 Untuk HEIC Support:
-    ```bash
-    pip install pyheif
-    ```
     """)
 
 # Footer

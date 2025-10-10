@@ -4,7 +4,6 @@ import io
 import os
 import tempfile
 from PIL import ImageOps
-import pillow_heif
 
 # Konfigurasi halaman
 st.set_page_config(
@@ -76,23 +75,40 @@ def compress_image(image, format_type, quality=85, max_size=None, size_unit='KB'
     
     return output.getvalue()
 
+# Fungsi untuk handle HEIC dengan pillow-heif
+def handle_heic_format(image_data):
+    """Handle HEIC format menggunakan pillow-heif"""
+    try:
+        import pillow_heif
+        heif_file = pillow_heif.read_heif(image_data)
+        image = Image.frombytes(
+            heif_file.mode,
+            heif_file.size,
+            heif_file.data,
+            "raw",
+        )
+        return image
+    except Exception as e:
+        st.error(f"Error membaca file HEIC: {str(e)}")
+        return None
+
 # Fungsi untuk memproses gambar
 def process_image(uploaded_file, output_format, max_size=None, size_unit='KB'):
     try:
         # Baca gambar
-        image_data = uploaded_file.read()
+        image_data = uploaded_file.getvalue()
         
-        # Handle format HEIC
+        # Handle format HEIC/HEIF
         if uploaded_file.type in ['image/heic', 'image/heif']:
-            heif_file = pillow_heif.read_heif(image_data)
-            image = Image.frombytes(
-                heif_file.mode,
-                heif_file.size,
-                heif_file.data,
-                "raw",
-            )
+            image = handle_heic_format(image_data)
+            if image is None:
+                return None, 0, 0, 0
         else:
+            # Handle format lainnya
             image = Image.open(io.BytesIO(image_data))
+            # Convert ke RGB jika perlu
+            if image.mode in ('RGBA', 'P') and output_format.upper() in ['JPG', 'JPEG']:
+                image = image.convert('RGB')
         
         # Compress gambar
         compressed_data = compress_image(image, output_format, max_size=max_size, size_unit=size_unit)
@@ -100,7 +116,7 @@ def process_image(uploaded_file, output_format, max_size=None, size_unit='KB'):
         # Info gambar asli
         original_size = len(image_data)
         compressed_size = len(compressed_data)
-        reduction = ((original_size - compressed_size) / original_size) * 100
+        reduction = ((original_size - compressed_size) / original_size) * 100 if original_size > 0 else 0
         
         return compressed_data, original_size, compressed_size, reduction
         
@@ -120,6 +136,15 @@ output_format = st.sidebar.selectbox(
     "Format Output",
     ["JPEG", "PNG", "WEBP"],
     help="Pilih format output untuk gambar yang dikompresi"
+)
+
+# Kualitas default
+quality = st.sidebar.slider(
+    "Kualitas Kompresi",
+    min_value=10,
+    max_value=95,
+    value=85,
+    help="Nilai lebih tinggi = kualitas lebih baik & ukuran file lebih besar"
 )
 
 # Opsi ukuran maksimal
@@ -153,6 +178,7 @@ if uploaded_files:
     
     total_original_size = 0
     total_compressed_size = 0
+    successful_compressions = 0
     
     for i, uploaded_file in enumerate(uploaded_files):
         st.write(f"**{i+1}. {uploaded_file.name}**")
@@ -160,7 +186,19 @@ if uploaded_files:
         col1, col2 = st.columns(2)
         
         with col1:
-            st.image(uploaded_file, caption="Gambar Asli", use_column_width=True)
+            # Tampilkan gambar asli
+            try:
+                if uploaded_file.type in ['image/heic', 'image/heif']:
+                    # Untuk HEIC, konversi dulu ke format yang bisa ditampilkan
+                    image = handle_heic_format(uploaded_file.getvalue())
+                    if image:
+                        st.image(image, caption="Gambar Asli (HEIC)", use_column_width=True)
+                    else:
+                        st.error("Tidak bisa menampilkan gambar HEIC")
+                else:
+                    st.image(uploaded_file, caption="Gambar Asli", use_column_width=True)
+            except Exception as e:
+                st.error(f"Tidak bisa menampilkan gambar: {str(e)}")
         
         with col2:
             with st.spinner(f"Memproses {uploaded_file.name}..."):
@@ -170,7 +208,10 @@ if uploaded_files:
                     compressed_data, original_size, compressed_size, reduction = result
                     
                     # Tampilkan gambar hasil kompresi
-                    st.image(compressed_data, caption="Hasil Kompresi", use_column_width=True)
+                    try:
+                        st.image(compressed_data, caption="Hasil Kompresi", use_column_width=True)
+                    except Exception as e:
+                        st.error(f"Tidak bisa menampilkan hasil: {str(e)}")
                     
                     # Info ukuran file
                     st.info(f"""
@@ -195,18 +236,21 @@ if uploaded_files:
                     
                     total_original_size += original_size
                     total_compressed_size += compressed_size
+                    successful_compressions += 1
+                else:
+                    st.error(f"Gagal memproses {uploaded_file.name}")
         
         st.markdown("---")
     
     # Summary
-    if len(uploaded_files) > 1:
-        total_reduction = ((total_original_size - total_compressed_size) / total_original_size) * 100
+    if successful_compressions > 0:
+        total_reduction = ((total_original_size - total_compressed_size) / total_original_size) * 100 if total_original_size > 0 else 0
         st.success(f"""
         **📊 Ringkasan Total:**
         - Total Ukuran Asli: {format_file_size(total_original_size)}
         - Total Ukuran Hasil: {format_file_size(total_compressed_size)}
         - Total Penghematan: {total_reduction:.1f}%
-        - Total File Diproses: {len(uploaded_files)}
+        - Berhasil Diproses: {successful_compressions}/{len(uploaded_files)} file
         """)
 
 else:

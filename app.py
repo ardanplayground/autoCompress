@@ -9,6 +9,9 @@ st.set_page_config(
     layout="wide"
 )
 
+st.title("🖼️ AutoCompress Image")
+st.markdown("Upload gambar JPG, JPEG, PNG untuk dikompresi otomatis!")
+
 # Fungsi untuk format ukuran file
 def format_file_size(size_bytes):
     if size_bytes >= 1024 * 1024:
@@ -18,212 +21,125 @@ def format_file_size(size_bytes):
     else:
         return f"{size_bytes} bytes"
 
-# Fungsi untuk compress gambar
-def compress_image(image, format_type, quality=85, max_size=None, size_unit='KB'):
-    """Compress image dengan kualitas optimal atau berdasarkan batas ukuran"""
-    
-    # Konversi ke RGB jika formatnya JPEG
-    if format_type.upper() in ['JPG', 'JPEG'] and image.mode in ('RGBA', 'P'):
-        image = image.convert('RGB')
-    
+# Fungsi compress gambar
+def compress_image(image, output_format, quality=85):
     output = io.BytesIO()
     
-    if max_size:
-        # Compression dengan batas ukuran
-        current_quality = quality
-        min_quality = 10
-        
-        for _ in range(10):  # Maksimal 10 iterasi
-            output.seek(0)
-            output.truncate(0)
-            
-            if format_type.upper() in ['JPG', 'JPEG']:
-                image.save(output, format='JPEG', quality=current_quality, optimize=True)
-            elif format_type.upper() == 'PNG':
-                image.save(output, format='PNG', optimize=True)
-            else:
-                image.save(output, format=format_type.upper(), optimize=True)
-            
-            file_size = len(output.getvalue())
-            
-            # Konversi ke bytes berdasarkan unit
-            if size_unit == 'KB':
-                max_size_bytes = max_size * 1024
-            else:  # MB
-                max_size_bytes = max_size * 1024 * 1024
-            
-            if file_size <= max_size_bytes or current_quality <= min_quality:
-                break
-                
-            # Kurangi kualitas untuk iterasi berikutnya
-            current_quality = max(min_quality, current_quality - 15)
-    else:
-        # Compression optimal
-        if format_type.upper() in ['JPG', 'JPEG']:
-            image.save(output, format='JPEG', quality=quality, optimize=True)
-        elif format_type.upper() == 'PNG':
-            image.save(output, format='PNG', optimize=True)
-        else:
-            image.save(output, format=format_type.upper(), optimize=True)
+    if output_format.upper() in ['JPG', 'JPEG']:
+        if image.mode in ('RGBA', 'P'):
+            image = image.convert('RGB')
+        image.save(output, format='JPEG', quality=quality, optimize=True)
+    elif output_format.upper() == 'PNG':
+        image.save(output, format='PNG', optimize=True)
     
     return output.getvalue()
 
-# Fungsi untuk memproses gambar
-def process_image(uploaded_file, output_format, max_size=None, size_unit='KB'):
-    try:
-        # Baca gambar
-        image_data = uploaded_file.getvalue()
-        image = Image.open(io.BytesIO(image_data))
-        
-        # Compress gambar
-        compressed_data = compress_image(image, output_format, max_size=max_size, size_unit=size_unit)
-        
-        # Info gambar asli
-        original_size = len(image_data)
-        compressed_size = len(compressed_data)
-        reduction = ((original_size - compressed_size) / original_size) * 100 if original_size > 0 else 0
-        
-        return compressed_data, original_size, compressed_size, reduction
-        
-    except Exception as e:
-        st.error(f"Error processing {uploaded_file.name}: {str(e)}")
-        return None, 0, 0, 0
+# Sidebar settings
+with st.sidebar:
+    st.header("⚙️ Pengaturan")
+    
+    output_format = st.selectbox(
+        "Format Output",
+        ["JPEG", "PNG"]
+    )
+    
+    quality = st.slider(
+        "Kualitas Kompresi",
+        min_value=10,
+        max_value=95,
+        value=85
+    )
+    
+    st.info("💡 Kualitas lebih rendah = ukuran file lebih kecil")
 
-# UI Streamlit
-st.title("🖼️ AutoCompress Image")
-st.markdown("Upload gambar Anda dan secara otomatis akan dikompresi tanpa disimpan di server!")
-
-# Sidebar untuk pengaturan
-st.sidebar.header("Pengaturan Kompresi")
-
-# Pilihan format output
-output_format = st.sidebar.selectbox(
-    "Format Output",
-    ["JPEG", "PNG"],
-    help="Pilih format output untuk gambar yang dikompresi"
-)
-
-# Kualitas default
-quality = st.sidebar.slider(
-    "Kualitas Kompresi",
-    min_value=10,
-    max_value=95,
-    value=85,
-    help="Nilai lebih tinggi = kualitas lebih baik & ukuran file lebih besar"
-)
-
-# Opsi ukuran maksimal
-use_size_limit = st.sidebar.checkbox("Batasan Ukuran File")
-
-max_size = None
-size_unit = 'KB'
-
-if use_size_limit:
-    col1, col2 = st.sidebar.columns(2)
-    with col1:
-        max_size = st.number_input(
-            "Ukuran Maksimal",
-            min_value=1,
-            value=100,
-            step=1
-        )
-    with col2:
-        size_unit = st.selectbox("Unit", ["KB", "MB"])
-
-# Area upload
+# File uploader
 uploaded_files = st.file_uploader(
-    "Drag and drop gambar di sini",
+    "📁 Drag & drop gambar di sini (JPG, JPEG, PNG)",
     type=['jpg', 'jpeg', 'png'],
-    accept_multiple_files=True,
-    help="Support format: JPG, JPEG, PNG"
+    accept_multiple_files=True
 )
 
 if uploaded_files:
-    st.subheader(f"📁 {len(uploaded_files)} Gambar Diproses")
+    st.success(f"✅ {len(uploaded_files)} gambar siap diproses!")
     
-    total_original_size = 0
-    total_compressed_size = 0
-    successful_compressions = 0
+    total_original = 0
+    total_compressed = 0
     
-    for i, uploaded_file in enumerate(uploaded_files):
-        st.write(f"**{i+1}. {uploaded_file.name}**")
+    for i, file in enumerate(uploaded_files):
+        st.write(f"---")
+        st.subheader(f"📄 {file.name}")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            # Tampilkan gambar asli
-            st.image(uploaded_file, caption="Gambar Asli", use_column_width=True)
-        
+            st.image(file, caption="Gambar Asli", use_column_width=True)
+            
         with col2:
-            with st.spinner(f"Memproses {uploaded_file.name}..."):
-                result = process_image(uploaded_file, output_format, max_size, size_unit)
-                
-                if result[0] is not None:
-                    compressed_data, original_size, compressed_size, reduction = result
+            with st.spinner("Memproses..."):
+                try:
+                    # Baca gambar
+                    image = Image.open(io.BytesIO(file.getvalue()))
                     
-                    # Tampilkan gambar hasil kompresi
+                    # Compress gambar
+                    compressed_data = compress_image(image, output_format, quality)
+                    
+                    # Hitung ukuran
+                    original_size = len(file.getvalue())
+                    compressed_size = len(compressed_data)
+                    reduction = ((original_size - compressed_size) / original_size) * 100
+                    
+                    # Tampilkan hasil
                     st.image(compressed_data, caption="Hasil Kompresi", use_column_width=True)
                     
-                    # Info ukuran file
                     st.info(f"""
-                    **Info Kompresi:**
-                    - Ukuran Asli: {format_file_size(original_size)}
-                    - Ukuran Hasil: {format_file_size(compressed_size)}
-                    - Pengurangan: {reduction:.1f}%
+                    **📊 Hasil Kompresi:**
+                    - Asli: {format_file_size(original_size)}
+                    - Hasil: {format_file_size(compressed_size)}
+                    - Pengurangan: **{reduction:.1f}%**
                     """)
                     
                     # Download button
-                    file_extension = output_format.lower()
-                    if file_extension == 'jpeg':
-                        file_extension = 'jpg'
-                    
+                    ext = "jpg" if output_format.upper() in ['JPG', 'JPEG'] else "png"
                     st.download_button(
-                        label=f"📥 Download {uploaded_file.name.split('.')[0]}_compressed.{file_extension}",
+                        label=f"📥 Download Gambar",
                         data=compressed_data,
-                        file_name=f"{uploaded_file.name.split('.')[0]}_compressed.{file_extension}",
-                        mime=f"image/{file_extension}",
-                        key=f"download_{i}"
+                        file_name=f"compressed_{file.name.split('.')[0]}.{ext}",
+                        mime=f"image/{ext}",
+                        key=f"dl_{i}"
                     )
                     
-                    total_original_size += original_size
-                    total_compressed_size += compressed_size
-                    successful_compressions += 1
-                else:
-                    st.error(f"Gagal memproses {uploaded_file.name}")
-        
-        st.markdown("---")
+                    total_original += original_size
+                    total_compressed += compressed_size
+                    
+                except Exception as e:
+                    st.error(f"❌ Gagal memproses {file.name}: {str(e)}")
     
-    # Summary
-    if successful_compressions > 0:
-        total_reduction = ((total_original_size - total_compressed_size) / total_original_size) * 100 if total_original_size > 0 else 0
+    # Total summary
+    if total_original > 0:
+        total_reduction = ((total_original - total_compressed) / total_original) * 100
         st.success(f"""
-        **📊 Ringkasan Total:**
-        - Total Ukuran Asli: {format_file_size(total_original_size)}
-        - Total Ukuran Hasil: {format_file_size(total_compressed_size)}
-        - Total Penghematan: {total_reduction:.1f}%
-        - Berhasil Diproses: {successful_compressions}/{len(uploaded_files)} file
+        **🎉 Ringkasan Total:**
+        - Total Ukuran Asli: {format_file_size(total_original)}
+        - Total Ukuran Hasil: {format_file_size(total_compressed)}  
+        - Total Penghematan: **{total_reduction:.1f}%**
+        - File Diproses: {len(uploaded_files)}
         """)
 
 else:
-    st.info("👆 Drag and drop gambar Anda di atas untuk memulai kompresi otomatis!")
+    st.info("""
+    **📖 Cara Penggunaan:**
+    1. Upload gambar JPG/JPEG/PNG
+    2. Atur pengaturan kompresi di sidebar
+    3. Download hasil kompresi
     
-    # Contoh penggunaan
-    st.markdown("""
-    ### 🚀 Fitur:
-    - ✅ Support multiple upload (drag & drop)
-    - ✅ Auto delete setelah proses - tidak disimpan di server
-    - ✅ Support format: JPG, JPEG, PNG
-    - ✅ Opsi batasan ukuran file (KB/MB)
-    - ✅ Kompresi optimal otomatis
-    - ✅ Download hasil kompresi
+    **✨ Fitur:**
+    - ✅ Multiple file upload
+    - ✅ Kompresi otomatis
+    - ✅ Tidak disimpan di server
+    - ✅ Download hasil
     - ✅ Ringkasan penghematan
     """)
 
 # Footer
 st.markdown("---")
-st.markdown(
-    "<div style='text-align: center; color: gray;'>"
-    "🛡️ <i>File Anda aman - tidak disimpan di server setelah diproses</i>"
-    "</div>",
-    unsafe_allow_html=True
-)
+st.caption("🛡️ File Anda aman - tidak disimpan di server setelah diproses")

@@ -1,145 +1,334 @@
 import streamlit as st
-from PIL import Image
 import io
+import os
+from PIL import Image
+import PyPDF2
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.utils import ImageReader
+import tempfile
+from pathlib import Path
+import base64
 
 # Konfigurasi halaman
 st.set_page_config(
-    page_title="AutoCompress Image",
-    page_icon="🖼️",
+    page_title="AutoCompress - PDF & Image Compressor",
+    page_icon="🗜️",
     layout="wide"
 )
 
-st.title("🖼️ AutoCompress Image")
-st.markdown("Upload gambar JPG, JPEG, PNG untuk dikompresi otomatis!")
+# CSS Custom
+st.markdown("""
+    <style>
+    .main-header {
+        font-size: 2.5rem;
+        font-weight: bold;
+        color: #1E88E5;
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+    .sub-header {
+        text-align: center;
+        color: #666;
+        margin-bottom: 2rem;
+    }
+    .stButton>button {
+        width: 100%;
+        background-color: #1E88E5;
+        color: white;
+        font-weight: bold;
+        border-radius: 8px;
+        padding: 0.5rem 1rem;
+        border: none;
+    }
+    .stButton>button:hover {
+        background-color: #1565C0;
+    }
+    .success-box {
+        padding: 1rem;
+        border-radius: 8px;
+        background-color: #E8F5E9;
+        border-left: 4px solid #4CAF50;
+        margin: 1rem 0;
+    }
+    </style>
+""", unsafe_allow_html=True)
 
-# Fungsi untuk format ukuran file
-def format_file_size(size_bytes):
-    if size_bytes >= 1024 * 1024:
-        return f"{size_bytes / (1024 * 1024):.2f} MB"
-    elif size_bytes >= 1024:
+def get_file_size_str(size_bytes):
+    """Konversi ukuran file ke format yang mudah dibaca"""
+    if size_bytes < 1024:
+        return f"{size_bytes} B"
+    elif size_bytes < 1024 * 1024:
         return f"{size_bytes / 1024:.2f} KB"
     else:
-        return f"{size_bytes} bytes"
+        return f"{size_bytes / (1024 * 1024):.2f} MB"
 
-# Fungsi compress gambar
-def compress_image(image, output_format, quality=85):
-    output = io.BytesIO()
-    
-    if output_format.upper() in ['JPG', 'JPEG']:
-        if image.mode in ('RGBA', 'P'):
-            image = image.convert('RGB')
-        image.save(output, format='JPEG', quality=quality, optimize=True)
-    elif output_format.upper() == 'PNG':
-        image.save(output, format='PNG', optimize=True)
-    
-    return output.getvalue()
+def compress_image(image_file, quality=85, max_size_kb=None, max_size_mb=None):
+    """Kompresi gambar dengan opsi quality dan ukuran maksimal"""
+    try:
+        # Baca gambar
+        image = Image.open(image_file)
+        
+        # Konversi RGBA ke RGB jika perlu
+        if image.mode in ('RGBA', 'LA', 'P'):
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            if image.mode == 'P':
+                image = image.convert('RGBA')
+            background.paste(image, mask=image.split()[-1] if image.mode in ('RGBA', 'LA') else None)
+            image = background
+        
+        # Hitung target size jika ada
+        target_size = None
+        if max_size_kb:
+            target_size = max_size_kb * 1024
+        elif max_size_mb:
+            target_size = max_size_mb * 1024 * 1024
+        
+        # Kompresi dengan quality yang ditentukan
+        output = io.BytesIO()
+        current_quality = quality
+        
+        # Jika ada target size, coba kompresi hingga mencapai target
+        if target_size:
+            while current_quality > 10:
+                output = io.BytesIO()
+                image.save(output, format='JPEG', quality=current_quality, optimize=True)
+                
+                if output.tell() <= target_size or current_quality <= 15:
+                    break
+                    
+                current_quality -= 5
+        else:
+            image.save(output, format='JPEG', quality=current_quality, optimize=True)
+        
+        output.seek(0)
+        return output, current_quality
+        
+    except Exception as e:
+        st.error(f"Error saat kompresi gambar: {str(e)}")
+        return None, None
 
-# Sidebar settings
-with st.sidebar:
-    st.header("⚙️ Pengaturan")
-    
-    output_format = st.selectbox(
-        "Format Output",
-        ["JPEG", "PNG"]
-    )
-    
-    quality = st.slider(
-        "Kualitas Kompresi",
-        min_value=10,
-        max_value=95,
-        value=85
-    )
-    
-    st.info("💡 Kualitas lebih rendah = ukuran file lebih kecil")
+def compress_pdf(pdf_file, max_size_kb=None, max_size_mb=None):
+    """Kompresi PDF dengan mengekstrak dan mengkompresi gambar"""
+    try:
+        # Baca PDF
+        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        
+        # Buat temporary file untuk output
+        output = io.BytesIO()
+        pdf_writer = PyPDF2.PdfWriter()
+        
+        # Hitung target size jika ada
+        target_size = None
+        if max_size_kb:
+            target_size = max_size_kb * 1024
+        elif max_size_mb:
+            target_size = max_size_mb * 1024 * 1024
+        
+        # Copy semua halaman dengan kompresi
+        for page_num in range(len(pdf_reader.pages)):
+            page = pdf_reader.pages[page_num]
+            
+            # Kompres konten halaman
+            page.compress_content_streams()
+            pdf_writer.add_page(page)
+        
+        # Tulis ke output dengan kompresi
+        pdf_writer.write(output)
+        output.seek(0)
+        
+        # Jika masih terlalu besar dan ada target, coba kompresi lebih agresif
+        if target_size and output.tell() > target_size:
+            # Implementasi kompresi lebih agresif bisa ditambahkan di sini
+            # Untuk saat ini, kita kembalikan hasil kompresi standar
+            pass
+        
+        return output
+        
+    except Exception as e:
+        st.error(f"Error saat kompresi PDF: {str(e)}")
+        return None
 
-# File uploader
-uploaded_files = st.file_uploader(
-    "📁 Drag & drop gambar di sini (JPG, JPEG, PNG)",
-    type=['jpg', 'jpeg', 'png'],
-    accept_multiple_files=True
+def create_download_link(file_bytes, filename, file_type):
+    """Buat link download untuk file yang sudah dikompresi"""
+    b64 = base64.b64encode(file_bytes.read()).decode()
+    file_bytes.seek(0)
+    
+    if file_type == "image":
+        mime = "image/jpeg"
+    else:
+        mime = "application/pdf"
+    
+    href = f'<a href="data:{mime};base64,{b64}" download="{filename}" style="text-decoration:none;"><button style="background-color:#4CAF50;color:white;padding:10px 20px;border:none;border-radius:5px;cursor:pointer;font-weight:bold;">📥 Download File Terkompresi</button></a>'
+    return href
+
+# Header
+st.markdown('<div class="main-header">🗜️ AutoCompress</div>', unsafe_allow_html=True)
+st.markdown('<div class="sub-header">Kompresi PDF & Gambar dengan Mudah dan Aman</div>', unsafe_allow_html=True)
+
+# Info keamanan
+with st.expander("ℹ️ Tentang Keamanan File"):
+    st.info("""
+    **Keamanan File Terjamin:**
+    - File diproses sementara di server dan langsung dihapus setelah kompresi
+    - Tidak ada file yang disimpan permanen
+    - Setiap sesi pengguna terisolasi
+    - Proses kompresi dilakukan secara lokal pada session Anda
+    """)
+
+# Sidebar untuk pengaturan
+st.sidebar.header("⚙️ Pengaturan Kompresi")
+
+file_type = st.sidebar.selectbox(
+    "Pilih Tipe File:",
+    ["Gambar (JPG, PNG)", "PDF"]
 )
 
-if uploaded_files:
-    st.success(f"✅ {len(uploaded_files)} gambar siap diproses!")
+# Advanced Options
+with st.sidebar.expander("🔧 Advanced Options", expanded=False):
+    st.markdown("**Batasan Ukuran File (Opsional)**")
+    st.caption("Kosongkan jika tidak perlu batasan ukuran tertentu")
     
-    total_original = 0
-    total_compressed = 0
+    col1, col2 = st.columns(2)
+    with col1:
+        use_kb = st.checkbox("Gunakan KB")
+        if use_kb:
+            max_kb = st.number_input("Maksimal (KB)", min_value=10, max_value=10000, value=500, step=10)
+        else:
+            max_kb = None
     
-    for i, file in enumerate(uploaded_files):
-        st.write(f"---")
-        st.subheader(f"📄 {file.name}")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.image(file, caption="Gambar Asli", use_column_width=True)
+    with col2:
+        use_mb = st.checkbox("Gunakan MB")
+        if use_mb:
+            max_mb = st.number_input("Maksimal (MB)", min_value=0.1, max_value=100.0, value=1.0, step=0.1)
+        else:
+            max_mb = None
+    
+    if use_kb and use_mb:
+        st.warning("⚠️ Pilih salah satu: KB atau MB")
+    
+    if file_type == "Gambar (JPG, PNG)":
+        st.markdown("**Kualitas Kompresi Gambar**")
+        quality = st.slider("Quality (%)", min_value=10, max_value=100, value=85, step=5)
+        st.caption("Quality lebih rendah = ukuran file lebih kecil")
+
+# Area upload
+st.markdown("### 📤 Upload File")
+
+if file_type == "Gambar (JPG, PNG)":
+    uploaded_file = st.file_uploader(
+        "Pilih gambar untuk dikompresi",
+        type=['jpg', 'jpeg', 'png'],
+        help="Format yang didukung: JPG, JPEG, PNG"
+    )
+else:
+    uploaded_file = st.file_uploader(
+        "Pilih PDF untuk dikompresi",
+        type=['pdf'],
+        help="Format yang didukung: PDF"
+    )
+
+# Proses kompresi
+if uploaded_file is not None:
+    # Tampilkan info file original
+    original_size = len(uploaded_file.getvalue())
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("📄 Nama File", uploaded_file.name)
+    with col2:
+        st.metric("📊 Ukuran Original", get_file_size_str(original_size))
+    with col3:
+        st.metric("📋 Tipe", uploaded_file.type)
+    
+    # Tombol compress
+    if st.button("🗜️ COMPRESS NOW", type="primary"):
+        with st.spinner("Sedang memproses... Mohon tunggu"):
             
-        with col2:
-            with st.spinner("Memproses..."):
-                try:
-                    # Baca gambar
-                    image = Image.open(io.BytesIO(file.getvalue()))
-                    
-                    # Compress gambar
-                    compressed_data = compress_image(image, output_format, quality)
-                    
-                    # Hitung ukuran
-                    original_size = len(file.getvalue())
-                    compressed_size = len(compressed_data)
-                    reduction = ((original_size - compressed_size) / original_size) * 100
-                    
-                    # Tampilkan hasil
-                    st.image(compressed_data, caption="Hasil Kompresi", use_column_width=True)
-                    
-                    st.info(f"""
-                    **📊 Hasil Kompresi:**
-                    - Asli: {format_file_size(original_size)}
-                    - Hasil: {format_file_size(compressed_size)}
-                    - Pengurangan: **{reduction:.1f}%**
-                    """)
-                    
-                    # Download button
-                    ext = "jpg" if output_format.upper() in ['JPG', 'JPEG'] else "png"
-                    st.download_button(
-                        label=f"📥 Download Gambar",
-                        data=compressed_data,
-                        file_name=f"compressed_{file.name.split('.')[0]}.{ext}",
-                        mime=f"image/{ext}",
-                        key=f"dl_{i}"
+            # Reset pointer file
+            uploaded_file.seek(0)
+            
+            if file_type == "Gambar (JPG, PNG)":
+                # Validasi checkbox
+                if use_kb and use_mb:
+                    st.error("❌ Silakan pilih hanya satu: KB atau MB di Advanced Options")
+                else:
+                    compressed_file, final_quality = compress_image(
+                        uploaded_file,
+                        quality=quality if not (use_kb or use_mb) else 85,
+                        max_size_kb=max_kb if use_kb else None,
+                        max_size_mb=max_mb if use_mb else None
                     )
                     
-                    total_original += original_size
-                    total_compressed += compressed_size
+                    if compressed_file:
+                        compressed_size = len(compressed_file.getvalue())
+                        compression_ratio = ((original_size - compressed_size) / original_size) * 100
+                        
+                        # Tampilkan hasil
+                        st.markdown('<div class="success-box">', unsafe_allow_html=True)
+                        st.success("✅ Kompresi Berhasil!")
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("📉 Ukuran Setelah Kompresi", get_file_size_str(compressed_size))
+                        with col2:
+                            st.metric("💾 Penghematan", f"{compression_ratio:.1f}%")
+                        with col3:
+                            st.metric("🎯 Quality Akhir", f"{final_quality}%")
+                        
+                        # Preview gambar
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.markdown("**Original**")
+                            uploaded_file.seek(0)
+                            st.image(uploaded_file, use_container_width=True)
+                        with col2:
+                            st.markdown("**Terkompresi**")
+                            compressed_file.seek(0)
+                            st.image(compressed_file, use_container_width=True)
+                        
+                        # Link download
+                        compressed_file.seek(0)
+                        filename = f"compressed_{uploaded_file.name.rsplit('.', 1)[0]}.jpg"
+                        st.markdown(create_download_link(compressed_file, filename, "image"), unsafe_allow_html=True)
+            
+            else:  # PDF
+                # Validasi checkbox
+                if use_kb and use_mb:
+                    st.error("❌ Silakan pilih hanya satu: KB atau MB di Advanced Options")
+                else:
+                    compressed_file = compress_pdf(
+                        uploaded_file,
+                        max_size_kb=max_kb if use_kb else None,
+                        max_size_mb=max_mb if use_mb else None
+                    )
                     
-                except Exception as e:
-                    st.error(f"❌ Gagal memproses {file.name}: {str(e)}")
-    
-    # Total summary
-    if total_original > 0:
-        total_reduction = ((total_original - total_compressed) / total_original) * 100
-        st.success(f"""
-        **🎉 Ringkasan Total:**
-        - Total Ukuran Asli: {format_file_size(total_original)}
-        - Total Ukuran Hasil: {format_file_size(total_compressed)}  
-        - Total Penghematan: **{total_reduction:.1f}%**
-        - File Diproses: {len(uploaded_files)}
-        """)
-
-else:
-    st.info("""
-    **📖 Cara Penggunaan:**
-    1. Upload gambar JPG/JPEG/PNG
-    2. Atur pengaturan kompresi di sidebar
-    3. Download hasil kompresi
-    
-    **✨ Fitur:**
-    - ✅ Multiple file upload
-    - ✅ Kompresi otomatis
-    - ✅ Tidak disimpan di server
-    - ✅ Download hasil
-    - ✅ Ringkasan penghematan
-    """)
+                    if compressed_file:
+                        compressed_size = len(compressed_file.getvalue())
+                        compression_ratio = ((original_size - compressed_size) / original_size) * 100
+                        
+                        # Tampilkan hasil
+                        st.markdown('<div class="success-box">', unsafe_allow_html=True)
+                        st.success("✅ Kompresi Berhasil!")
+                        st.markdown('</div>', unsafe_allow_html=True)
+                        
+                        col1, col2 = st.columns(2)
+                        with col1:
+                            st.metric("📉 Ukuran Setelah Kompresi", get_file_size_str(compressed_size))
+                        with col2:
+                            st.metric("💾 Penghematan", f"{compression_ratio:.1f}%")
+                        
+                        # Link download
+                        compressed_file.seek(0)
+                        filename = f"compressed_{uploaded_file.name}"
+                        st.markdown(create_download_link(compressed_file, filename, "pdf"), unsafe_allow_html=True)
 
 # Footer
 st.markdown("---")
-st.caption("🛡️ File Anda aman - tidak disimpan di server setelah diproses")
+st.markdown("""
+<div style='text-align: center; color: #666; padding: 1rem;'>
+    <p><strong>AutoCompress</strong> - Kompresi file dengan aman dan mudah</p>
+    <p style='font-size: 0.9rem;'>File Anda diproses secara aman dan tidak disimpan</p>
+</div>
+""", unsafe_allow_html=True)

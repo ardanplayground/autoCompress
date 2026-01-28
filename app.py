@@ -2,10 +2,7 @@ import streamlit as st
 import io
 import os
 from PIL import Image
-import PyPDF2
-from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import letter
-from reportlab.lib.utils import ImageReader
+from pypdf import PdfReader, PdfWriter
 import tempfile
 from pathlib import Path
 import base64
@@ -112,11 +109,11 @@ def compress_pdf(pdf_file, max_size_kb=None, max_size_mb=None):
     """Kompresi PDF dengan mengekstrak dan mengkompresi gambar"""
     try:
         # Baca PDF
-        pdf_reader = PyPDF2.PdfReader(pdf_file)
+        pdf_reader = PdfReader(pdf_file)
         
         # Buat temporary file untuk output
         output = io.BytesIO()
-        pdf_writer = PyPDF2.PdfWriter()
+        pdf_writer = PdfWriter()
         
         # Hitung target size jika ada
         target_size = None

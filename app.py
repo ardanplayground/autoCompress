@@ -373,5 +373,6 @@ st.markdown("""
 <div style='text-align: center; color: #666; padding: 1rem;'>
     <p><strong>AutoCompress</strong> - Kompresi file dengan aman dan mudah</p>
     <p style='font-size: 0.9rem;'>File Anda diproses secara aman dan tidak disimpan</p>
+    <p style='font-size: 0.9rem;'>Made with 💖 by Ardan</p>
 </div>
 """, unsafe_allow_html=True)

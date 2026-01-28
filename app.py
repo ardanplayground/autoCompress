@@ -117,10 +117,10 @@ def compress_pdf(pdf_file, max_size_kb=None, max_size_mb=None):
     try:
         # Baca PDF dari bytes
         pdf_bytes = pdf_file.read()
-        pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
+        pdf_file.seek(0)  # Reset pointer
         
-        # Buat PDF baru dengan kompresi
-        output = io.BytesIO()
+        # Buka PDF document
+        pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
         
         # Hitung target size jika ada
         target_size = None
@@ -129,42 +129,58 @@ def compress_pdf(pdf_file, max_size_kb=None, max_size_mb=None):
         elif max_size_mb:
             target_size = max_size_mb * 1024 * 1024
         
-        # Buat PDF writer dengan kompresi
-        writer = fitz.open()
+        # Tentukan DPI berdasarkan target size
+        dpi = 150  # Default DPI
+        if target_size:
+            # Kurangi DPI jika target size kecil
+            original_size = len(pdf_bytes)
+            if target_size < original_size * 0.3:
+                dpi = 100
+            elif target_size < original_size * 0.5:
+                dpi = 120
+        
+        # Buat PDF baru dengan kompresi
+        output_pdf = fitz.open()
         
         for page_num in range(pdf_document.page_count):
             page = pdf_document[page_num]
             
-            # Dapatkan gambar dari halaman dan kompres
-            pix = page.get_pixmap(matrix=fitz.Matrix(1, 1))
+            # Render halaman ke gambar dengan DPI yang ditentukan
+            zoom = dpi / 72  # 72 adalah DPI default
+            mat = fitz.Matrix(zoom, zoom)
+            pix = page.get_pixmap(matrix=mat, alpha=False)
             
-            # Kompres gambar jika ada target size
+            # Konversi ke PIL Image
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            
+            # Tentukan quality berdasarkan target size
+            quality = 85
             if target_size:
-                # Konversi ke PIL Image
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                
-                # Kompres gambar
-                img_bytes = io.BytesIO()
-                quality = 85
-                while quality > 20:
+                target_per_page = target_size / pdf_document.page_count
+                # Coba beberapa quality level
+                for q in [85, 75, 65, 55, 45, 35]:
                     img_bytes = io.BytesIO()
-                    img.save(img_bytes, format='JPEG', quality=quality, optimize=True)
-                    if img_bytes.tell() <= target_size / pdf_document.page_count:
+                    img.save(img_bytes, format='JPEG', quality=q, optimize=True)
+                    if img_bytes.tell() <= target_per_page:
+                        quality = q
                         break
-                    quality -= 10
-                
-                img_bytes.seek(0)
-                
-                # Buat halaman baru dari gambar terkompresi
-                img_pdf = fitz.open(stream=img_bytes, filetype="jpeg")
-                writer.insert_pdf(img_pdf)
-            else:
-                # Salin halaman dengan kompresi default
-                writer.insert_pdf(pdf_document, from_page=page_num, to_page=page_num)
+            
+            # Simpan gambar dengan quality yang sudah ditentukan
+            img_bytes = io.BytesIO()
+            img.save(img_bytes, format='JPEG', quality=quality, optimize=True)
+            img_bytes.seek(0)
+            
+            # Buat PDF page dari gambar
+            img_pdf = fitz.open(stream=img_bytes.read(), filetype="jpeg")
+            page_rect = page.rect
+            pdf_page = output_pdf.new_page(width=page_rect.width, height=page_rect.height)
+            pdf_page.insert_image(page_rect, stream=img_bytes.getvalue())
+            img_pdf.close()
         
-        # Simpan dengan kompresi maksimal
-        writer.save(output, garbage=4, deflate=True, clean=True)
-        writer.close()
+        # Simpan ke output dengan kompresi maksimal
+        output = io.BytesIO()
+        output_pdf.save(output, garbage=4, deflate=True, clean=True)
+        output_pdf.close()
         pdf_document.close()
         
         output.seek(0)
@@ -172,6 +188,8 @@ def compress_pdf(pdf_file, max_size_kb=None, max_size_mb=None):
         
     except Exception as e:
         st.error(f"Error saat kompresi PDF: {str(e)}")
+        import traceback
+        st.error(traceback.format_exc())
         return None
 
 def create_download_link(file_bytes, filename, file_type):

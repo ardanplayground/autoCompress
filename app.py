@@ -2,10 +2,8 @@ import streamlit as st
 import io
 import os
 from PIL import Image
-from pypdf import PdfReader, PdfWriter
-import tempfile
-from pathlib import Path
 import base64
+import fitz  # PyMuPDF
 
 # Konfigurasi halaman
 st.set_page_config(
@@ -89,12 +87,21 @@ def compress_image(image_file, quality=85, max_size_kb=None, max_size_mb=None):
         if target_size:
             while current_quality > 10:
                 output = io.BytesIO()
-                image.save(output, format='JPEG', quality=current_quality, optimize=True)
+                
+                # Resize jika perlu untuk mencapai target size
+                temp_image = image.copy()
+                temp_image.save(output, format='JPEG', quality=current_quality, optimize=True)
                 
                 if output.tell() <= target_size or current_quality <= 15:
                     break
                     
                 current_quality -= 5
+                
+                # Jika quality sudah rendah tapi masih terlalu besar, resize gambar
+                if current_quality <= 20 and output.tell() > target_size:
+                    scale = 0.9
+                    new_size = (int(temp_image.width * scale), int(temp_image.height * scale))
+                    image = image.resize(new_size, Image.Resampling.LANCZOS)
         else:
             image.save(output, format='JPEG', quality=current_quality, optimize=True)
         
@@ -106,14 +113,14 @@ def compress_image(image_file, quality=85, max_size_kb=None, max_size_mb=None):
         return None, None
 
 def compress_pdf(pdf_file, max_size_kb=None, max_size_mb=None):
-    """Kompresi PDF dengan mengekstrak dan mengkompresi gambar"""
+    """Kompresi PDF menggunakan PyMuPDF"""
     try:
-        # Baca PDF
-        pdf_reader = PdfReader(pdf_file)
+        # Baca PDF dari bytes
+        pdf_bytes = pdf_file.read()
+        pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
         
-        # Buat temporary file untuk output
+        # Buat PDF baru dengan kompresi
         output = io.BytesIO()
-        pdf_writer = PdfWriter()
         
         # Hitung target size jika ada
         target_size = None
@@ -122,24 +129,45 @@ def compress_pdf(pdf_file, max_size_kb=None, max_size_mb=None):
         elif max_size_mb:
             target_size = max_size_mb * 1024 * 1024
         
-        # Copy semua halaman dengan kompresi
-        for page_num in range(len(pdf_reader.pages)):
-            page = pdf_reader.pages[page_num]
+        # Buat PDF writer dengan kompresi
+        writer = fitz.open()
+        
+        for page_num in range(pdf_document.page_count):
+            page = pdf_document[page_num]
             
-            # Kompres konten halaman
-            page.compress_content_streams()
-            pdf_writer.add_page(page)
+            # Dapatkan gambar dari halaman dan kompres
+            pix = page.get_pixmap(matrix=fitz.Matrix(1, 1))
+            
+            # Kompres gambar jika ada target size
+            if target_size:
+                # Konversi ke PIL Image
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                
+                # Kompres gambar
+                img_bytes = io.BytesIO()
+                quality = 85
+                while quality > 20:
+                    img_bytes = io.BytesIO()
+                    img.save(img_bytes, format='JPEG', quality=quality, optimize=True)
+                    if img_bytes.tell() <= target_size / pdf_document.page_count:
+                        break
+                    quality -= 10
+                
+                img_bytes.seek(0)
+                
+                # Buat halaman baru dari gambar terkompresi
+                img_pdf = fitz.open(stream=img_bytes, filetype="jpeg")
+                writer.insert_pdf(img_pdf)
+            else:
+                # Salin halaman dengan kompresi default
+                writer.insert_pdf(pdf_document, from_page=page_num, to_page=page_num)
         
-        # Tulis ke output dengan kompresi
-        pdf_writer.write(output)
+        # Simpan dengan kompresi maksimal
+        writer.save(output, garbage=4, deflate=True, clean=True)
+        writer.close()
+        pdf_document.close()
+        
         output.seek(0)
-        
-        # Jika masih terlalu besar dan ada target, coba kompresi lebih agresif
-        if target_size and output.tell() > target_size:
-            # Implementasi kompresi lebih agresif bisa ditambahkan di sini
-            # Untuk saat ini, kita kembalikan hasil kompresi standar
-            pass
-        
         return output
         
     except Exception as e:

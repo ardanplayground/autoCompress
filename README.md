@@ -1,1 +1,3 @@
-# autoCompress
+# autoCompress for IMAGE AND PDF
+
+FULL SERVER SIDE PROCESS AND 100% PRIVACY
